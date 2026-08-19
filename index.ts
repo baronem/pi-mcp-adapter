@@ -4,7 +4,7 @@ import type { DirectToolSpec, McpAdapterOptions, McpConfig, PromptMetadata } fro
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
-import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, authenticateServer, logoutServer, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
+import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, authenticateServer, logoutServer, manageBearerToken, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
 import { cloneMcpConfig, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.ts";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
@@ -479,6 +479,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           { value: "prompts", label: "prompts — List all MCP prompts" },
           { value: "setup", label: "setup — Configure MCP servers" },
           { value: "logout", label: "logout — Clear server credentials" },
+          { value: "token", label: "token — Manage stored bearer tokens" },
           { value: "disable", label: "disable — Disable a server" },
           { value: "enable", label: "enable — Enable a server" },
           { value: "status", label: "status — Show server status" },
@@ -488,10 +489,26 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
       const [, subcommand, argumentPrefix] = argumentMatch;
       if (
-        (subcommand !== "reconnect" && subcommand !== "logout" && subcommand !== "disable" && subcommand !== "enable")
+        (subcommand !== "reconnect" && subcommand !== "logout" && subcommand !== "disable" && subcommand !== "enable" && subcommand !== "token")
         || argumentPrefix === undefined
         || !state
       ) return null;
+
+      if (subcommand === "token") {
+        const tokenMatch = argumentPrefix.trimStart().match(/^(set|remove|status)\s+(.*)$/);
+        if (!tokenMatch) {
+          const actions = ["set", "remove", "status"]
+            .filter(action => action.startsWith(argumentPrefix.trimStart()))
+            .map(action => ({ value: `token ${action} `, label: `${action} — Bearer token ${action}` }));
+          return actions.length > 0 ? actions : null;
+        }
+        const action = tokenMatch[1] ?? "";
+        const serverPrefix = tokenMatch[2] ?? "";
+        const servers = Object.keys(state.config.mcpServers)
+          .filter(serverName => serverName.startsWith(serverPrefix.trimStart()))
+          .map(serverName => ({ value: `token ${action} ${serverName}`, label: serverName }));
+        return servers.length > 0 ? servers : null;
+      }
 
       const servers = Object.keys(state.config.mcpServers)
         .filter((serverName) => serverName.startsWith(argumentPrefix.trimStart()))
@@ -566,6 +583,21 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }
           commandOwner?.throwIfInactive();
           await logoutServer(serverName, state, commandCtx);
+          break;
+        }
+        case "token": {
+          const action = parts[1];
+          const serverName = parts.slice(2).join(" ");
+          if (action !== "set" && action !== "remove" && action !== "status") {
+            if (commandCtx.hasUI) commandCtx.ui?.notify("Usage: /mcp token set|remove|status <server>", "error");
+            return;
+          }
+          if (!serverName) {
+            if (commandCtx.hasUI) commandCtx.ui?.notify("Usage: /mcp token set|remove|status <server>", "error");
+            return;
+          }
+          commandOwner?.throwIfInactive();
+          await manageBearerToken(action, serverName, state, commandCtx);
           break;
         }
         case "disable":

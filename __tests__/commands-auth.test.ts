@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
@@ -20,6 +20,13 @@ vi.mock("../init.ts", () => ({
 }));
 
 describe("authenticateServer", () => {
+  const originalStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+
+  afterEach(() => {
+    if (originalStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+    else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = originalStore;
+  });
+
   it("does not open an empty auth panel for disabled-only OAuth config", async () => {
     const ui = { notify: vi.fn(), custom: vi.fn() };
     const { openMcpAuthPanel } = await import("../commands.ts");
@@ -174,5 +181,69 @@ describe("authenticateServer", () => {
       { signal: inputController.signal },
     );
     expect(ui.confirm.mock.invocationCallOrder[0]).toBeLessThan(ui.input.mock.invocationCallOrder[0]);
+  });
+
+  it("blocks bearer token set because the extension UI has no masked secret input", async () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    const ui = { notify: vi.fn(), input: vi.fn() };
+    const { manageBearerToken } = await import("../commands.ts");
+
+    const result = await manageBearerToken("set", "remote", {
+      config: { mcpServers: { remote: { url: "https://example.test/mcp", auth: "bearer", bearerTokenStore: true } } },
+    } as any, { hasUI: true, mode: "tui", ui } as any);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("no masked secret input primitive");
+    expect(ui.input).not.toHaveBeenCalled();
+    expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("no masked secret input primitive"), "error");
+  });
+
+  it("redacts unresolvable server URLs from token command errors", async () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    delete process.env.PI_MCP_TEST_UNSET_SECRET;
+    const ui = { notify: vi.fn() };
+    const { manageBearerToken } = await import("../commands.ts");
+
+    const result = await manageBearerToken("status", "remote", {
+      config: { mcpServers: { remote: { url: "https://user:${PI_MCP_TEST_UNSET_SECRET}@example.test/mcp", auth: "bearer", bearerTokenStore: true } } },
+    } as any, { hasUI: true, mode: "tui", ui } as any);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("invalid or unresolvable URL");
+    expect(result.message).not.toContain("example.test");
+  });
+
+  it("reports stored bearer token status without exposing the token", async () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    const { resetTestBearerTokenStore, saveBearerTokenForUrl } = await import("../mcp-bearer-store.ts");
+    resetTestBearerTokenStore();
+    saveBearerTokenForUrl("remote", "secret-token", "https://example.test/mcp");
+    const ui = { notify: vi.fn() };
+    const { manageBearerToken } = await import("../commands.ts");
+
+    const result = await manageBearerToken("status", "remote", {
+      config: { mcpServers: { remote: { url: "https://example.test/mcp", auth: "bearer", bearerTokenStore: true } } },
+    } as any, { hasUI: true, mode: "tui", ui } as any);
+
+    expect(result).toEqual({ ok: true, message: 'Bearer token is stored for "remote".' });
+    expect(result.message).not.toContain("secret-token");
+    expect(ui.notify).toHaveBeenCalledWith('Bearer token is stored for "remote".', "info");
+  });
+
+  it("removes stored bearer tokens without exposing the token", async () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    const { getBearerTokenForUrl, resetTestBearerTokenStore, saveBearerTokenForUrl } = await import("../mcp-bearer-store.ts");
+    resetTestBearerTokenStore();
+    saveBearerTokenForUrl("remote", "secret-token", "https://example.test/mcp");
+    const ui = { notify: vi.fn() };
+    const { manageBearerToken } = await import("../commands.ts");
+
+    const result = await manageBearerToken("remove", "remote", {
+      config: { mcpServers: { remote: { url: "https://example.test/mcp", auth: "bearer", bearerTokenStore: true } } },
+    } as any, { hasUI: true, mode: "tui", ui } as any);
+
+    expect(result).toEqual({ ok: true, message: 'Bearer token removed for "remote".' });
+    expect(getBearerTokenForUrl("remote", "https://example.test/mcp")).toBeUndefined();
+    expect(result.message).not.toContain("secret-token");
   });
 });

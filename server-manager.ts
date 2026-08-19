@@ -34,6 +34,7 @@ import { logger } from "./logger.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { invalidateAuthEntryCache, type AuthStorageOptions } from "./mcp-auth.ts";
+import { getBearerTokenForUrl } from "./mcp-bearer-store.ts";
 import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
 import {
   handleUrlElicitation,
@@ -852,7 +853,10 @@ export class McpServerManager {
     if (definition.auth === "bearer") {
       const token = commandBearer
         ? resolveCommandSecret(commandBearer, `MCP server "${serverName}" HTTP bearer token`)
-        : resolveBearerToken(definition);
+        : resolveBearerToken(definition)
+          ?? (definition.bearerToken === undefined && definition.bearerTokenEnv === undefined && definition.bearerTokenStore === true
+            ? getBearerTokenForUrl(serverName, serverUrl)
+            : undefined);
       if (token) headers["Authorization"] = `Bearer ${token}`;
     }
 

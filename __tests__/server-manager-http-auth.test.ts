@@ -80,9 +80,11 @@ describe("McpServerManager HTTP bearer auth", () => {
     MCP_TEST_BEARER_TOKEN: process.env.MCP_TEST_BEARER_TOKEN,
     MCP_TEST_BEARER_TOKEN_ENV: process.env.MCP_TEST_BEARER_TOKEN_ENV,
     MCP_TEST_URL: process.env.MCP_TEST_URL,
+    PI_MCP_ADAPTER_TEST_AUTH_STORE: process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE,
   };
 
   beforeEach(() => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
     mocks.afterConnect = undefined;
     mocks.clients.length = 0;
     mocks.connectErrors.length = 0;
@@ -196,6 +198,86 @@ describe("McpServerManager HTTP bearer auth", () => {
     });
 
     expect(mocks.httpTransports.at(-1)!.options.requestInit?.headers?.Authorization).toBe("Bearer named-env-token");
+  });
+
+  it("uses an adapter-owned stored bearer token only when explicit sources are absent", async () => {
+    const { resetTestBearerTokenStore, saveBearerTokenForUrl } = await import("../mcp-bearer-store.ts");
+    const { McpServerManager } = await import("../server-manager.ts");
+    resetTestBearerTokenStore();
+    saveBearerTokenForUrl("remote", "stored-token", "https://example.test/mcp");
+
+    const manager = new McpServerManager();
+    await manager.connect("remote", {
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerTokenStore: true,
+    });
+
+    expect(mocks.httpTransports.at(-1)!.options.requestInit?.headers?.Authorization).toBe("Bearer stored-token");
+  });
+
+  it("keeps literal and environment bearer tokens ahead of the stored token", async () => {
+    const { resetTestBearerTokenStore, saveBearerTokenForUrl } = await import("../mcp-bearer-store.ts");
+    const { McpServerManager } = await import("../server-manager.ts");
+    resetTestBearerTokenStore();
+    saveBearerTokenForUrl("literal", "stored-token", "https://example.test/mcp");
+    saveBearerTokenForUrl("env", "stored-token", "https://example.test/mcp");
+    process.env.MCP_TEST_BEARER_TOKEN_ENV = "env-token";
+
+    const manager = new McpServerManager();
+    await manager.connect("literal", {
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerToken: "literal-token",
+      bearerTokenStore: true,
+    });
+    await manager.connect("env", {
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerTokenEnv: "MCP_TEST_BEARER_TOKEN_ENV",
+      bearerTokenStore: true,
+    });
+
+    expect(mocks.httpTransports.at(-2)!.options.requestInit?.headers?.Authorization).toBe("Bearer literal-token");
+    expect(mocks.httpTransports.at(-1)!.options.requestInit?.headers?.Authorization).toBe("Bearer env-token");
+  });
+
+  it("does not send Authorization when the stored bearer record is missing or URL-bound elsewhere", async () => {
+    const { resetTestBearerTokenStore, saveBearerTokenForUrl } = await import("../mcp-bearer-store.ts");
+    const { McpServerManager } = await import("../server-manager.ts");
+    resetTestBearerTokenStore();
+    saveBearerTokenForUrl("mismatch", "stored-token", "https://other.test/mcp");
+
+    const manager = new McpServerManager();
+    await manager.connect("missing", {
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerTokenStore: true,
+    });
+    await manager.connect("mismatch", {
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerTokenStore: true,
+    });
+
+    expect(mocks.httpTransports.at(-2)!.options.requestInit?.headers?.Authorization).toBeUndefined();
+    expect(mocks.httpTransports.at(-1)!.options.requestInit?.headers?.Authorization).toBeUndefined();
+  });
+
+  it("fails closed before transport when the bearer token store is unavailable", async () => {
+    const { resetTestBearerTokenStore } = await import("../mcp-bearer-store.ts");
+    const { McpServerManager } = await import("../server-manager.ts");
+    resetTestBearerTokenStore();
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+
+    const manager = new McpServerManager();
+    await expect(manager.connect("remote", {
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerTokenStore: true,
+    })).rejects.toThrow("Failed to read bearer token for remote");
+
+    expect(mocks.httpTransports).toHaveLength(0);
   });
 
   it("uses configured headers without implicit OAuth", async () => {

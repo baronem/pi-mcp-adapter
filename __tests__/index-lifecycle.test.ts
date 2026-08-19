@@ -1287,6 +1287,7 @@ describe("mcpAdapter session lifecycle", () => {
       "prompts",
       "setup",
       "logout",
+      "token",
       "disable",
       "enable",
       "status",

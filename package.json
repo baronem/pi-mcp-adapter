@@ -116,6 +116,7 @@
     "oauth-handler.ts",
     "oauth.ts",
     "mcp-auth.ts",
+    "mcp-bearer-store.ts",
     "mcp-keyring-helper.cjs",
     "mcp-oauth-provider.ts",
     "mcp-callback-server.ts",

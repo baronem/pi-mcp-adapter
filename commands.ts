@@ -20,6 +20,7 @@ import { loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.t
 import { buildToolMetadata } from "./tool-metadata.ts";
 import { supportsOAuth, authenticate, removeAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
+import { inspectBearerTokenForUrl, removeBearerToken } from "./mcp-bearer-store.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
 import { openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
@@ -377,6 +378,75 @@ export async function logoutServer(
   updateStatusBar(state);
 
   const message = `OAuth credentials cleared for "${serverName}". Run /mcp-auth ${serverName} to authenticate again.`;
+  if (ui) ui.notify(message, "info");
+  return { ok: true, message };
+}
+
+function validateBearerTokenStoreServer(
+  serverName: string,
+  state: McpExtensionState,
+): { ok: true; serverUrl: string } | { ok: false; message: string; type: "error" | "warning" } {
+  const safeName = sanitizeTerminalText(serverName);
+  const definition = state.config.mcpServers[serverName];
+  if (!definition) return { ok: false, message: `Server "${safeName}" not found in config`, type: "error" };
+  if (isServerDisabled(definition)) return { ok: false, message: `Server "${safeName}" is disabled. Run /mcp enable ${safeName}, then /reload.`, type: "warning" };
+  if (definition.auth !== "bearer" || definition.bearerTokenStore !== true) {
+    return { ok: false, message: `Server "${safeName}" is not configured for bearerTokenStore.`, type: "error" };
+  }
+  // resolveServerUrl embeds the interpolated URL in its exceptions; redact it
+  // because the URL can carry userinfo or interpolated secrets.
+  let serverUrl: string | undefined;
+  try {
+    serverUrl = resolveServerUrl(definition);
+  } catch {
+    return { ok: false, message: `Server "${safeName}" has an invalid or unresolvable URL.`, type: "error" };
+  }
+  if (!serverUrl) return { ok: false, message: `Server "${safeName}" has no URL configured.`, type: "error" };
+  return { ok: true, serverUrl };
+}
+
+export async function manageBearerToken(
+  action: "set" | "remove" | "status",
+  serverName: string,
+  state: McpExtensionState,
+  ctx: ExtensionContext,
+): Promise<{ ok: boolean; message: string }> {
+  const ui = ctx.hasUI ? ctx.ui : undefined;
+  const safeName = sanitizeTerminalText(serverName);
+  const validation = validateBearerTokenStoreServer(serverName, state);
+  if (!validation.ok) {
+    if (ui) ui.notify(validation.message, validation.type);
+    return { ok: false, message: validation.message };
+  }
+
+  if (action === "set") {
+    const message = `Cannot store bearer token here: Pi extension UI has no masked secret input primitive. Run \`pi-mcp-adapter token set ${safeName}\` in a terminal; it reads the token from stdin only.`;
+    if (ui) ui.notify(message, "error");
+    return { ok: false, message };
+  }
+
+  if (action === "status") {
+    const status = inspectBearerTokenForUrl(serverName, validation.serverUrl);
+    const message = status.status === "present"
+      ? `Bearer token is stored for "${safeName}".`
+      : status.status === "url-mismatch"
+        ? `Bearer token is stored for "${safeName}", but its URL does not match the current server URL.`
+        : status.status === "unavailable"
+          ? status.message
+          : `No bearer token is stored for "${safeName}".`;
+    if (ui) ui.notify(message, status.status === "unavailable" ? "error" : "info");
+    return { ok: status.status !== "unavailable", message };
+  }
+
+  try {
+    removeBearerToken(serverName);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (ui) ui.notify(`Failed to remove bearer token for "${safeName}": ${sanitizeTerminalText(message)}`, "error");
+    return { ok: false, message };
+  }
+
+  const message = `Bearer token removed for "${safeName}".`;
   if (ui) ui.notify(message, "info");
   return { ok: true, message };
 }
