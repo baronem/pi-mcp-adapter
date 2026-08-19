@@ -1145,6 +1145,24 @@ describe("config discovery", () => {
     expect(JSON.stringify(entry)).not.toContain("secret-bearer-token");
   });
 
+  it("drops inherited bearerTokenStore when a url-only override repoints the server", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-bts-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-bts-project-"));
+    writeBakedAndOverride(
+      home,
+      project,
+      { url: URL_A, auth: "bearer", bearerTokenStore: true },
+      { url: URL_B },
+    );
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+
+    const entry = config.mcpServers.litellm;
+    expect(entry).toEqual({ url: URL_B, auth: "bearer" });
+    expect(entry.bearerTokenStore).toBeUndefined();
+  });
+
   it("drops an inherited request headers command when a url-only override repoints the server", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-rhc-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-rhc-project-"));
