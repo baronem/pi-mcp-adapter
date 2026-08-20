@@ -7,32 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.27.0] - 2026-08-20
+
+### Highlights
+- MCP servers can now come from packages, runtime extension APIs, or the usual config files.
+- Static bearer tokens can use the OS credential store, with a stdin-only CLI for safer token management.
+- Long-lived sessions recover better when remote MCP servers are slow, refreshed, or reconnected.
+- OAuth flows clean up their callback listener when idle and work better inside nested terminal UI prompts.
+- Search, metadata cache writes, direct-tool counts, and UI stream pruning now do less repeated work.
+
 ### Added
-- Added `/pi-mcp` as an alias for `/mcp` when a host reserves `/mcp`. Thanks to [@inxeoz](https://github.com/inxeoz) for #391.
-- Added `registerMcpServer({ pi, name, definition })` so other extensions can register and dispose session-scoped MCP servers at runtime. Registrations are proxy-tool-only, never persisted, and duplicate names fail closed. Thanks to [@bendavis78](https://github.com/bendavis78) and [@fmoda3](https://github.com/fmoda3) for the runtime API request in #376/#382.
-- Added `pi.mcp` package manifest entries so Pi packages can ship prefixed MCP server definitions without user MCP config edits. Thanks to [@bendavis78](https://github.com/bendavis78) for #376 and [@fmoda3](https://github.com/fmoda3) for the manifest design.
-- Added opt-in OS credential-store lookup for static bearer tokens with URL-bound records, using `bearerTokenStore: true`, plus a stdin-only `pi-mcp-adapter token set|status|remove <server>` CLI that never accepts the token as an argument. Thanks to [@AlexanderBartash](https://github.com/AlexanderBartash) for issue #366.
+- `/pi-mcp` now works as an alias for `/mcp` when a host reserves `/mcp`. Thanks to [@inxeoz](https://github.com/inxeoz) for #391.
+- `registerMcpServer({ pi, name, definition })` lets other extensions register and dispose session-scoped MCP servers at runtime. Registrations are proxy-tool-only, never persisted, and duplicate names fail closed. Thanks to [@bendavis78](https://github.com/bendavis78) and [@fmoda3](https://github.com/fmoda3) for the runtime API request in #376/#382.
+- Pi packages can ship prefixed MCP server definitions with `pi.mcp` manifest entries, without asking users to edit MCP config files. Thanks to [@bendavis78](https://github.com/bendavis78) for #376 and [@fmoda3](https://github.com/fmoda3) for the manifest design.
+- Static bearer tokens can opt into OS credential-store lookup with URL-bound records by setting `bearerTokenStore: true`. The new `pi-mcp-adapter token set|status|remove <server>` CLI reads tokens from stdin and never accepts a token as an argument. Thanks to [@AlexanderBartash](https://github.com/AlexanderBartash) for issue #366.
 
 ### Changed
-- Precomputed normalized MCP tool fields and keyword tokens per catalog to reduce repeated search ranking work.
-- Reduced cold HTTP connect overhead for per-request header commands by collecting process cleanup data in one snapshot per pass.
-- Reduced metadata cache save cost and file size by writing compact JSON while preserving atomic replacement and cross-process merges.
-- Reduced high-frequency UI stream event-log pruning cost by tracking the latest checkpoint event ID instead of rescanning retained patches.
-- Reused MCP panel direct-tool counts and token totals across renders while keeping toggle and reconnect updates immediate.
+- Search ranking now reuses normalized MCP tool fields and keyword tokens per catalog.
+- Per-request header commands collect process cleanup data in one snapshot per pass, reducing cold HTTP connect overhead.
+- Metadata cache saves write compact JSON while preserving atomic replacement and cross-process merges.
+- High-frequency UI stream event-log pruning tracks the latest checkpoint event ID instead of rescanning retained patches.
+- The MCP panel reuses direct-tool counts and token totals across renders while keeping toggle and reconnect updates immediate.
 
 ### Fixed
-- Suppressed false Node 24 unmanaged file-descriptor warnings for short-lived `mcpScript` workers. Thanks to [@blalor](https://github.com/blalor) for PR #407.
-- Released the OAuth callback listener after idle auth flows and kept MCP pickers hidden while nested OAuth input is active. Thanks to [@trevorleibert-mixpanel](https://github.com/trevorleibert-mixpanel) for PRs #403 and #404.
-- Raised the `ps` `maxBuffer` for request-header command cleanup so the full `ps axeww` process-discovery scan no longer overflows spawnSync's 1 MiB default on busy hosts, which had SIGTERM'd `ps` and surfaced as spurious `HTTP request headers command cleanup failed: ps exited with code unknown` refresh failures. Thanks to [@rtfpessoa](https://github.com/rtfpessoa) for PR #399.
-- Kept slow but healthy remote keep-alive servers from being marked failed when a bounded tools/list refresh times out. Thanks to [@brightmeowso](https://github.com/brightmeowso) for #400.
-- Reused one selector candidate index while reconstructing filtered cached metadata, avoiding repeated scans of large cached catalogs at startup.
-- Published the first connected MCP status snapshot only after direct-tool synchronization so status consumers do not see a connected catalog before Pi's model-facing tool surface is current. Thanks to [@dmorn](https://github.com/dmorn) for PR #380.
-- Normalized MCP tool-call arguments before approval and transport so JSON-string arguments keep all fields and embedded quotes. Thanks to [@sebbean](https://github.com/sebbean) for PR #377.
-- Scoped session tool approvals to the approved argument payload instead of every later call to the same tool. Thanks to [@spaceshipmike](https://github.com/spaceshipmike) for #367.
-- Stopped MCP panel commands from hanging in RPC, JSON, and print modes when terminal-only custom UI is unavailable. Thanks to [@shixin-guo](https://github.com/shixin-guo) for PR #365.
-- Kept compact MCP rows useful by showing a bounded tool-input preview and skipping leading blank output lines in collapsed result previews.
-- Recovered MCP gateway requests nested inside proxy `args` instead of silently showing status, and now rejects invalid nested gateway requests with guidance. Thanks to [@ibrmora](https://github.com/ibrmora) for #363.
-- Refreshed remote keep-alive tool catalogs before user input, adapter-triggered turns, and during health checks, reconnecting expired Streamable HTTP sessions so long-lived Pi sessions can discover replacement catalogs without restarting. Thanks to [@dmorn](https://github.com/dmorn) for #369 and PR #370.
+- Short-lived `mcpScript` workers no longer emit false unmanaged file-descriptor warnings on Node 24. Thanks to [@blalor](https://github.com/blalor) for PR #407.
+- OAuth callback listeners are released after idle auth flows, and MCP pickers stay hidden while nested OAuth input is active. Thanks to [@trevorleibert-mixpanel](https://github.com/trevorleibert-mixpanel) for PRs #403 and #404.
+- Request-header command cleanup can scan large process lists without overflowing `spawnSync`'s 1 MiB default buffer, which previously caused spurious `HTTP request headers command cleanup failed: ps exited with code unknown` refresh failures on busy hosts. Thanks to [@rtfpessoa](https://github.com/rtfpessoa) for PR #399.
+- Slow but healthy remote keep-alive servers are no longer marked failed when a bounded tools/list refresh times out. Thanks to [@brightmeowso](https://github.com/brightmeowso) for #400.
+- Cached metadata reconstruction now reuses one selector candidate index, avoiding repeated scans of large cached catalogs at startup.
+- MCP status consumers no longer see a connected catalog before Pi's model-facing tool surface is current. The first connected status snapshot now waits for direct-tool synchronization. Thanks to [@dmorn](https://github.com/dmorn) for PR #380.
+- JSON-string MCP tool-call arguments are normalized before approval and transport, preserving all fields and embedded quotes. Thanks to [@sebbean](https://github.com/sebbean) for PR #377.
+- Session tool approvals are scoped to the approved argument payload instead of every later call to the same tool. Thanks to [@spaceshipmike](https://github.com/spaceshipmike) for #367.
+- MCP panel commands no longer hang in RPC, JSON, and print modes when terminal-only custom UI is unavailable. Thanks to [@shixin-guo](https://github.com/shixin-guo) for PR #365.
+- Compact MCP rows now show a bounded tool-input preview and skip leading blank output lines in collapsed result previews.
+- MCP gateway requests nested inside proxy `args` are recovered instead of silently showing status, and invalid nested gateway requests now fail with guidance. Thanks to [@ibrmora](https://github.com/ibrmora) for #363.
+- Remote keep-alive tool catalogs refresh before user input, adapter-triggered turns, and health checks. Expired Streamable HTTP sessions reconnect so long-lived Pi sessions can discover replacement catalogs without restarting. Thanks to [@dmorn](https://github.com/dmorn) for #369 and PR #370.
 
 ## [2.26.0] - 2026-08-14
 
