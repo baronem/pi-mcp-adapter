@@ -73,6 +73,14 @@ export class McpLifecycleManager {
     if (settings?.idleTimeout !== undefined) this.serverSettings.set(name, settings);
   }
 
+  unregisterServer(name: string): void {
+    this.allServers.delete(name);
+    this.keepAliveServers.delete(name);
+    this.serverSettings.delete(name);
+    this.retryStates.delete(name);
+    this.pendingMetadataPublications.delete(name);
+  }
+
   setGlobalIdleTimeout(minutes: number): void {
     this.globalIdleTimeout = minutes * 60 * 1000;
   }
@@ -155,6 +163,10 @@ export class McpLifecycleManager {
     retrySuperseded = true,
   ): Promise<void> {
     if (isServerDisabled(definition) || this.stopped || signal?.aborted) return;
+    // Fence against unregisterServer racing an in-flight convergence pass.
+    // Identity comparison also rejects stale passes after a same-name
+    // replacement registration, which a name check would wrongly accept.
+    if (this.keepAliveServers.get(name) !== definition) return;
     const connection = this.manager.getConnection(name);
     if (connection?.status === "needs-auth") {
       this.pendingMetadataPublications.delete(name);
@@ -171,17 +183,18 @@ export class McpLifecycleManager {
         freshConnection = await this.manager.connect(name, definition, signal);
       } catch (error) {
         if (this.stopped || signal?.aborted) return;
-        this.reportConnectionFailure(name, error, "reconnect", this.manager.getConnection(name));
+        this.reportConnectionFailure(name, definition, error, "reconnect", this.manager.getConnection(name));
         return;
       }
       if (this.stopped || signal?.aborted) return;
       if (freshConnection.status === "needs-auth") {
-        await this.notifyAuthRequired(name);
+        await this.notifyAuthRequired(name, definition, freshConnection);
         return;
       }
       if (freshConnection.status !== "connected") {
         this.reportConnectionFailure(
           name,
+          definition,
           new Error(`MCP server ${name} did not return a connected session`),
           "reconnect",
           freshConnection,
@@ -189,12 +202,12 @@ export class McpLifecycleManager {
         return;
       }
       logger.debug(`Reconnected to ${name}`);
-      await this.publishConnectedMetadata(name, freshConnection);
+      await this.publishConnectedMetadata(name, definition, freshConnection);
       return;
     }
 
     if (this.pendingMetadataPublications.has(name)) {
-      await this.publishConnectedMetadata(name, connection);
+      await this.publishConnectedMetadata(name, definition, connection);
       return;
     }
     if (!definition.url) return;
@@ -210,7 +223,7 @@ export class McpLifecycleManager {
         return;
       }
       if (!shouldReconnectAfterRefresh(error, hadSessionId)) {
-        this.reportConnectionFailure(name, error, "refresh", connection);
+        this.reportConnectionFailure(name, definition, error, "refresh", connection);
         return;
       }
       if (this.hasPendingAuthForServer(name)) {
@@ -222,17 +235,18 @@ export class McpLifecycleManager {
         freshConnection = await this.manager.reconnect(name, definition, connection, signal);
       } catch (reconnectError) {
         if (this.stopped || signal?.aborted) return;
-        this.reportConnectionFailure(name, reconnectError, "reconnect", this.manager.getConnection(name));
+        this.reportConnectionFailure(name, definition, reconnectError, "reconnect", this.manager.getConnection(name));
         return;
       }
       if (this.stopped || signal?.aborted) return;
       if (freshConnection.status === "needs-auth") {
-        await this.notifyAuthRequired(name);
+        await this.notifyAuthRequired(name, definition, freshConnection);
         return;
       }
       if (freshConnection.status !== "connected") {
         this.reportConnectionFailure(
           name,
+          definition,
           new Error(`MCP server ${name} did not return a connected session`),
           "reconnect",
           freshConnection,
@@ -240,7 +254,7 @@ export class McpLifecycleManager {
         return;
       }
       logger.debug(`Reconnected stale MCP session for ${name}`);
-      await this.publishConnectedMetadata(name, freshConnection);
+      await this.publishConnectedMetadata(name, definition, freshConnection);
       return;
     }
 
@@ -248,6 +262,7 @@ export class McpLifecycleManager {
       await this.handleSupersededConnection(name, definition, connection, signal, retrySuperseded);
       return;
     }
+    if (this.keepAliveServers.get(name) !== definition) return;
     if (this.retryStates.delete(name)) {
       await this.onHealthRestored?.(name);
     }
@@ -261,16 +276,17 @@ export class McpLifecycleManager {
     retrySuperseded: boolean,
   ): Promise<void> {
     const current = this.manager.getConnection(name);
+    if (this.keepAliveServers.get(name) !== definition) return;
     if (current === staleConnection && current.status === "connected") {
       if (this.retryStates.delete(name)) await this.onHealthRestored?.(name);
       return;
     }
     if (current?.status === "connected") {
-      await this.publishConnectedMetadata(name, current);
+      await this.publishConnectedMetadata(name, definition, current);
       return;
     }
     if (current?.status === "needs-auth") {
-      await this.notifyAuthRequired(name);
+      await this.notifyAuthRequired(name, definition, current);
       return;
     }
     if (retrySuperseded) {
@@ -278,7 +294,15 @@ export class McpLifecycleManager {
     }
   }
 
-  private async publishConnectedMetadata(name: string, connection: ServerConnection): Promise<void> {
+  private async publishConnectedMetadata(name: string, definition: ServerDefinition, connection: ServerConnection): Promise<void> {
+    // Fence stale convergence passes by definition identity so disposal, and
+    // disposal followed by a same-name replacement, never re-track this
+    // server. Close the pass's own connection only when it is still current,
+    // so a replacement's connection is never touched.
+    if (this.keepAliveServers.get(name) !== definition) {
+      if (this.manager.getConnection(name) === connection) await this.manager.close(name);
+      return;
+    }
     this.pendingMetadataPublications.add(name);
     try {
       await this.onReconnect?.(name);
@@ -286,11 +310,19 @@ export class McpLifecycleManager {
       this.retryStates.delete(name);
     } catch (error) {
       if (this.stopped) return;
-      this.reportConnectionFailure(name, error, "publish", connection);
+      this.reportConnectionFailure(name, definition, error, "publish", connection);
     }
   }
 
-  private async notifyAuthRequired(name: string): Promise<void> {
+  private async notifyAuthRequired(name: string, definition: ServerDefinition, connection: ServerConnection): Promise<void> {
+    // Fence stale convergence passes by definition identity. Close the
+    // leftover needs-auth connection only while it is still the manager's
+    // current entry, so a replacement's connection is never touched and the
+    // stale client/transport cannot leak when a replacement connects later.
+    if (this.keepAliveServers.get(name) !== definition) {
+      if (this.manager.getConnection(name) === connection) await this.manager.close(name);
+      return;
+    }
     this.pendingMetadataPublications.delete(name);
     this.retryStates.delete(name);
     try {
@@ -313,10 +345,14 @@ export class McpLifecycleManager {
 
   private reportConnectionFailure(
     name: string,
+    definition: ServerDefinition,
     error: unknown,
     action: "refresh" | "reconnect" | "publish",
     connection: ServerConnection | undefined,
   ): void {
+    // Do not recreate retry/failure state from a stale convergence pass after
+    // disposal or a same-name replacement registration.
+    if (this.keepAliveServers.get(name) !== definition) return;
     const attempts = (this.retryStates.get(name)?.attempts ?? 0) + 1;
     const delay = Math.min(
       KEEP_ALIVE_RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 10),
