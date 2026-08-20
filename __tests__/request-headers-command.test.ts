@@ -368,4 +368,55 @@ setTimeout(() => {
       "timeoutMs must be an integer between 1 and 60000",
     );
   });
+
+  it.skipIf(process.platform === "win32")("tolerates ps output exceeding the default spawnSync buffer", async () => {
+    // `ps axeww` dumps every process environment; on busy hosts that exceeds
+    // spawnSync's 1 MiB default maxBuffer, which SIGTERMs `ps` and makes
+    // process discovery fail spuriously. A fake `ps` emitting ~1.7 MiB of
+    // valid lines must not break the request.
+    const dir = mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-ps-"));
+    const ps = join(dir, "ps");
+    const line = "1 1 " + "x".repeat(64);
+    const lineCount = 24_000; // ~1.7 MiB, comfortably over 1 MiB
+    // Shell builtins only: the test runs with PATH restricted to this dir, so
+    // external binaries like `yes`/`head` would not be found (exit 127).
+    writeFileSync(ps, `#!/bin/sh\ni=0\nwhile [ "$i" -lt ${lineCount} ]; do\n  echo ${JSON.stringify(line)}\n  i=$((i + 1))\ndone\n`);
+    chmodSync(ps, 0o755);
+    const priorPath = process.env.PATH;
+    process.env.PATH = dir;
+    try {
+      const fetch = createRequestHeadersCommandFetch(
+        { command: "/usr/bin/printf", args: ["{}"] },
+        async () => new Response("ok"),
+      );
+      await expect(fetch("https://mcp.example.test/mcp")).resolves.toBeInstanceOf(Response);
+    } finally {
+      process.env.PATH = priorPath;
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("fails closed before spawning when the full cleanup scan fails after a lightweight scan would pass", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-mcp-request-headers-ps-"));
+    const ps = join(dir, "ps");
+    const marker = join(dir, "marker");
+    writeFileSync(ps, `#!/bin/sh\ncase "$*" in\n  *axeww*) exit 1 ;;\n  *) exit 0 ;;\nesac\n`);
+    chmodSync(ps, 0o755);
+    const script = commandScript(`
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker)}, "spawned");
+process.stdout.write(JSON.stringify({ "x-derived": "ok" }));
+`);
+    const priorPath = process.env.PATH;
+    process.env.PATH = dir;
+    try {
+      const fetch = createRequestHeadersCommandFetch({ command: process.execPath, args: [script] });
+
+      await expect(fetch("https://mcp.example.test/mcp")).rejects.toThrow(
+        "HTTP request headers command cleanup failed: ps exited with code 1",
+      );
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      process.env.PATH = priorPath;
+    }
+  });
 });
