@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Precomputed normalized MCP tool fields and keyword tokens per catalog to reduce repeated search ranking work.
+- Reduced cold HTTP connect overhead for per-request header commands by collecting process cleanup data in one snapshot per pass.
 
 ### Fixed
 - Reused one selector candidate index while reconstructing filtered cached metadata, avoiding repeated scans of large cached catalogs at startup.
