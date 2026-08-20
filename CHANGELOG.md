@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added opt-in OS credential-store lookup for static bearer tokens with URL-bound records, using `bearerTokenStore: true`, plus a stdin-only `pi-mcp-adapter token set|status|remove <server>` CLI that never accepts the token as an argument. Thanks to [@AlexanderBartash](https://github.com/AlexanderBartash) for issue #366.
 
 ### Fixed
+- Published the first connected MCP status snapshot only after direct-tool synchronization so status consumers do not see a connected catalog before Pi's model-facing tool surface is current. Thanks to [@dmorn](https://github.com/dmorn) for PR #380.
 - Normalized MCP tool-call arguments before approval and transport so JSON-string arguments keep all fields and embedded quotes. Thanks to [@sebbean](https://github.com/sebbean) for PR #377.
 - Scoped session tool approvals to the approved argument payload instead of every later call to the same tool. Thanks to [@spaceshipmike](https://github.com/spaceshipmike) for #367.
 - Stopped MCP panel commands from hanging in RPC, JSON, and print modes when terminal-only custom UI is unavailable. Thanks to [@shixin-guo](https://github.com/shixin-guo) for PR #365.
