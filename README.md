@@ -140,6 +140,24 @@ A Pi package can ship MCP servers for the installed adapter without requiring a 
 
 `pi.mcp` can also be an array of package-relative paths. Each file uses the normal `mcpServers` object shape, but package manifests load only server entries: package `settings` and `imports` are ignored. Server names are prefixed with the sanitized package name, such as `acme_tools__docs`, and user/global/project MCP config has higher precedence. The adapter loads only Pi packages listed in Pi settings; it does not scan `node_modules`.
 
+### Runtime registration from other extensions
+
+An extension can register MCP servers with the installed adapter at runtime, for example a plugin host that discovers plugins after load:
+
+```ts
+import { registerMcpServer } from "pi-mcp-adapter";
+
+export default function pluginHost(pi) {
+  const registration = registerMcpServer(pi, "acme__docs", {
+    url: "https://mcp.example.com/mcp",
+  });
+  // Later, when the plugin is uninstalled:
+  await registration.dispose();
+}
+```
+
+Runtime registrations are session scoped and never written to config files. Duplicate server names fail closed against configured servers and other registrations. Registered servers use the normal lazy connection, OAuth, approval, and shutdown behavior, but they are proxy-tool-only and their tools become visible at the next tool sync. To change a definition, dispose the registration and register again. Registration throws when no adapter is installed for the given Pi instance.
+
 ### SDK configuration
 
 Use `createMcpAdapter` when an SDK or server integration already owns its MCP configuration:

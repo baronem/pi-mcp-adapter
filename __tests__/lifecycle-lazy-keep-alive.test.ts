@@ -545,4 +545,61 @@ describe("lazy-keep-alive lifecycle", () => {
 
     expect(manager.connect).toHaveBeenCalledTimes(2);
   });
+
+  it("closes a keep-alive connection when the server is unregistered mid-connect", async () => {
+    const def = makeDefinition("keep-alive");
+    lifecycle.registerServer("srv", def);
+    lifecycle.markKeepAlive("srv", def);
+
+    let resolveConnect!: (connection: FakeConnection) => void;
+    fake.connect = vi.fn((name: string) => {
+      fake.connectCalls.push(name);
+      return new Promise<FakeConnection>((resolve) => {
+        resolveConnect = (connection) => {
+          fake.connections.set(name, connection);
+          resolve(connection);
+        };
+      });
+    }) as never;
+
+    const convergence = lifecycle.ensureConverged();
+    await Promise.resolve();
+    expect(fake.connectCalls).toContain("srv");
+
+    lifecycle.unregisterServer("srv");
+    resolveConnect({ status: "connected" });
+    await convergence;
+
+    expect(fake.closeCalls).toContain("srv");
+    expect(fake.connections.has("srv")).toBe(false);
+  });
+
+  it("does not record retry state from a stale pass against a same-name replacement", async () => {
+    const def = makeDefinition("keep-alive");
+    lifecycle.registerServer("srv", def);
+    lifecycle.markKeepAlive("srv", def);
+
+    let rejectConnect!: (error: Error) => void;
+    fake.connect = vi.fn((name: string) => {
+      fake.connectCalls.push(name);
+      return new Promise<FakeConnection>((_resolve, reject) => {
+        rejectConnect = reject;
+      });
+    }) as never;
+
+    const convergence = lifecycle.ensureConverged();
+    await Promise.resolve();
+    expect(fake.connectCalls).toContain("srv");
+
+    // Dispose, then immediately register a replacement under the same name.
+    lifecycle.unregisterServer("srv");
+    const replacement = makeDefinition("keep-alive");
+    lifecycle.registerServer("srv", replacement);
+    lifecycle.markKeepAlive("srv", replacement);
+
+    rejectConnect(new Error("connection closed during dispose"));
+    await convergence;
+
+    expect((lifecycle as any).retryStates.has("srv")).toBe(false);
+  });
 });

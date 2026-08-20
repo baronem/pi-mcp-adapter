@@ -1,6 +1,6 @@
 import type { AgentToolUpdateCallback, ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import type { DirectToolSpec, McpAdapterOptions, McpConfig, PromptMetadata } from "./types.ts";
+import type { DirectToolSpec, McpAdapterOptions, McpConfig, PromptMetadata, ServerEntry } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
@@ -22,6 +22,7 @@ import { runMcpScript } from "./mcp-code.ts";
 import { cleanupMaterializedBinaryResources } from "./tool-registrar.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
+export type { ServerEntry } from "./types.ts";
 export {
   MCP_STATUS_EVENT,
   MCP_STATUS_SNAPSHOT_VERSION,
@@ -37,6 +38,14 @@ export {
 
 const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
+
+export interface McpServerRegistration {
+  dispose(): Promise<void>;
+}
+
+// Routes runtime registrations to the adapter installed for a specific Pi
+// instance, so a process with several adapters cannot cross-register.
+const runtimeRegistrars = new WeakMap<ExtensionAPI, (name: string, definition: ServerEntry) => McpServerRegistration>();
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof INIT_WAIT_TIMED_OUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -130,6 +139,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
   let directToolsFrozen = false;
+  // Session/runtime scoped server registrations from other extensions. They
+  // survive session restarts within this install and die with the process.
+  const runtimeServers = new Map<string, ServerEntry>();
+
+  // Mirrors init's per-server lifecycle registration so runtime servers get
+  // idle cleanup and keep-alive health recovery like configured servers.
+  function attachRuntimeServerLifecycle(targetState: McpExtensionState, name: string, definition: ServerEntry): void {
+    const lifecycleMode = definition.lifecycle ?? "lazy";
+    const persistsAfterFirstSpawn = lifecycleMode === "eager" || lifecycleMode === "lazy-keep-alive";
+    const idleOverride = definition.idleTimeout ?? (persistsAfterFirstSpawn ? 0 : undefined);
+    targetState.lifecycle.registerServer(name, definition, idleOverride !== undefined ? { idleTimeout: idleOverride } : undefined);
+    if (lifecycleMode === "keep-alive") targetState.lifecycle.markKeepAlive(name, definition);
+  }
 
   // OMP remaps `typebox` to a host shim that historically lacked Type.Unsafe.
   // Prefer Unsafe when present (real TypeBox / fixed OMP shim); otherwise pass
@@ -282,6 +304,45 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   registerPromptCommands(resolveCachedPrompts(earlyConfig));
 
+  runtimeRegistrars.set(pi, (name: string, definition: ServerEntry): McpServerRegistration => {
+    if (typeof name !== "string" || name.trim() === "") {
+      throw new Error("MCP server name must be a non-empty string");
+    }
+    if (typeof definition !== "object" || definition === null || Array.isArray(definition)) {
+      throw new Error(`MCP server definition for "${name}" must be an object`);
+    }
+    const effective = state?.config ?? earlyConfig;
+    if (runtimeServers.has(name) || Object.hasOwn(effective.mcpServers, name)) {
+      throw new Error(`MCP server "${name}" is already registered`);
+    }
+    // Runtime-registered servers are proxy-tool-only: direct tools are frozen
+    // at startup and must not be rebuilt for late registrations.
+    const entry: ServerEntry = { ...structuredClone(definition), directTools: false };
+    runtimeServers.set(name, entry);
+    const registeredState = state;
+    if (registeredState) {
+      registeredState.config.mcpServers[name] = entry;
+      attachRuntimeServerLifecycle(registeredState, name, entry);
+      syncToolSurface();
+      updateStatusBar(registeredState);
+    }
+    let disposed = false;
+    return {
+      dispose: async (): Promise<void> => {
+        if (disposed) return;
+        disposed = true;
+        runtimeServers.delete(name);
+        const currentState = state;
+        if (!currentState || currentState.config.mcpServers[name] !== entry) return;
+        delete currentState.config.mcpServers[name];
+        currentState.lifecycle.unregisterServer(name);
+        await currentState.manager.close(name);
+        syncToolSurface();
+        updateStatusBar(currentState);
+      },
+    };
+  });
+
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
 
   pi.registerFlag("mcp-config", {
@@ -314,6 +375,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
 
       state = nextState;
+      for (const [name, definition] of runtimeServers) {
+        if (Object.hasOwn(nextState.config.mcpServers, name)) {
+          console.error(`MCP: runtime-registered server "${name}" now collides with a configured server; keeping the configured server`);
+          continue;
+        }
+        nextState.config.mcpServers[name] = definition;
+        attachRuntimeServerLifecycle(nextState, name, definition);
+      }
       nextState.onToolMetadataUpdated = (_serverName, _reason) => {
         if (state !== nextState || !owner.isActive()) return;
         syncPromptCommands();
@@ -969,6 +1038,21 @@ export function createMcpAdapter(options: McpAdapterOptions = {}) {
       ...(factoryConfig !== undefined ? { config: cloneMcpConfig(factoryConfig) } : {}),
     });
   };
+}
+
+/**
+ * Register an MCP server with the adapter installed for this Pi instance.
+ * Registrations are session/runtime scoped and never persisted. Duplicate
+ * names fail closed. Registered servers are proxy-tool-only; their tools
+ * become visible at the next tool sync. To change a definition, dispose the
+ * registration and register again.
+ */
+export function registerMcpServer(pi: ExtensionAPI, name: string, definition: ServerEntry): McpServerRegistration {
+  const register = runtimeRegistrars.get(pi);
+  if (!register) {
+    throw new Error("pi-mcp-adapter is not installed for this Pi instance");
+  }
+  return register(name, definition);
 }
 
 export default createMcpAdapter();
