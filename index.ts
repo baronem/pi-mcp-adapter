@@ -8,7 +8,7 @@ import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, 
 import { cloneMcpConfig, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.ts";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
-import { loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
+import { loadMetadataCache, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
 import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, executeDescribe, executeInstructions, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
@@ -20,6 +20,7 @@ import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwne
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { runMcpScript } from "./mcp-code.ts";
 import { cleanupMaterializedBinaryResources } from "./tool-registrar.ts";
+import { syncNamespaceProxyTools } from "./namespace-tools.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
 export type { ServerEntry } from "./types.ts";
@@ -131,7 +132,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const earlyCache = loadMetadataCache();
   const envRaw = process.env.MCP_DIRECT_TOOLS;
   const envDirectToolOverride = envRaw?.split(",").map(s => s.trim()).filter(Boolean);
+  const namespaceEnvOverride = envRaw === "__none__"
+    ? { servers: new Set<string>(), tools: new Map<string, Set<string>>() }
+    : envDirectToolOverride
+      ? parseDirectToolSelectors(envDirectToolOverride)
+      : null;
   const registeredDirectTools = new Map<string, string>();
+  const registeredNamespaceProxyTools = new Set<string>();
   const fallbackDeactivatedTools = new Set<string>();
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
   const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
@@ -276,6 +283,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const cache = loadMetadataCache();
     const result = syncDirectTools(config, cache);
     syncProxyTool(config, cache, result.specs);
+    const nsResult = syncNamespaceProxyTools({
+      config,
+      cache,
+      envOverride: namespaceEnvOverride,
+      existingDirectNames: new Set(registeredDirectTools.keys()),
+      existingNamespaceNames: registeredNamespaceProxyTools,
+      pi,
+      getState: () => state,
+      getInitPromise: () => initPromise,
+      getPiTools: () => pi.getAllTools(),
+    });
+    for (const name of nsResult.added) registeredNamespaceProxyTools.add(name);
+    for (const name of nsResult.deactivated) registeredNamespaceProxyTools.delete(name);
     const changed = result.added.length + result.updated.length + result.deactivated.length;
     if (changed > 0 && ctx?.hasUI) {
       ctx.ui.notify(
@@ -1053,6 +1073,23 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   const initialDirectTools = syncDirectTools(earlyConfig, earlyCache).specs;
   syncProxyTool(earlyConfig, earlyCache, initialDirectTools);
+  // Register namespace-proxy tools eagerly so tool-groups/slow-mode can validate
+  // `mcp:<server>` references on the first session_start turn. Without this
+  // eager call, the tool-groups expansion runs before MCP initialization
+  // completes and emits false `[unknown-tool] mcp__<server>` diagnostics.
+  // Mirrors the upstream direct-tool install-time registration pattern.
+  const initialNamespaceResult = syncNamespaceProxyTools({
+    config: earlyConfig,
+    cache: earlyCache,
+    envOverride: namespaceEnvOverride,
+    existingDirectNames: new Set(registeredDirectTools.keys()),
+    existingNamespaceNames: registeredNamespaceProxyTools,
+    pi,
+    getState: () => state,
+    getInitPromise: () => initPromise,
+    getPiTools: () => pi.getAllTools(),
+  });
+  for (const name of initialNamespaceResult.added) registeredNamespaceProxyTools.add(name);
   startLoadTimeInitialization();
 }
 
