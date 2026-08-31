@@ -299,13 +299,32 @@ export function resolveDirectTools(
  * Live counts/status belong to `mcp({ })`, full instructions to
  * `mcp({ instructions })`.
  */
+const MAX_SERVER_DESCRIPTION_LENGTH = 500;
+
+function formatServerDescription(description: string | undefined): string | undefined {
+  if (typeof description !== "string") return undefined;
+  const normalized = description.trim().replace(/\s+/g, " ");
+  if (!normalized) return undefined;
+  if (normalized.length <= MAX_SERVER_DESCRIPTION_LENGTH) return normalized;
+  return `${normalized.slice(0, MAX_SERVER_DESCRIPTION_LENGTH - 1).trimEnd()}…`;
+}
+
 export function buildProxyDescription(config: McpConfig): string {
   let desc = `MCP gateway — server status, tool search/describe, auth, and single MCP tool calls. When one request needs several MCP calls with logic between them, use mcpScript. Non-MCP Pi tools should be called directly, not through mcp.\n`;
 
-  const serverNames = Object.keys(config.mcpServers)
-    .filter((serverName) => !isServerDisabled(config.mcpServers[serverName]));
-  if (serverNames.length > 0) {
-    desc += `\nServers: ${serverNames.join(", ")}\n`;
+  const servers = Object.entries(config.mcpServers)
+    .filter(([, definition]) => !isServerDisabled(definition));
+  if (servers.length > 0) {
+    const hasDescriptions = servers.some(([, definition]) => formatServerDescription(definition.description));
+    if (hasDescriptions) {
+      desc += `\nServers:\n`;
+      for (const [serverName, definition] of servers) {
+        const description = formatServerDescription(definition.description);
+        desc += `- ${serverName}${description ? `: ${description}` : ""}\n`;
+      }
+    } else {
+      desc += `\nServers: ${servers.map(([serverName]) => serverName).join(", ")}\n`;
+    }
   }
 
   const disabledServers = Object.entries(config.mcpServers)

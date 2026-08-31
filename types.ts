@@ -418,6 +418,8 @@ export interface HttpRequestHeadersCommand {
 
 // Server configuration
 export interface ServerEntry {
+  /** Static capability summary shown to the model in the MCP proxy tool description. */
+  description?: string;
   command?: string;
   args?: string[];
   /** Explicit rmcp-mux Unix-domain socket path. Mutually exclusive with command and url. */

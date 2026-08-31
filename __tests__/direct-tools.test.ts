@@ -79,6 +79,33 @@ describe("buildProxyDescription", () => {
     expect(description).not.toContain("MCP + pi");
   });
 
+  it("shows optional static server descriptions without requiring discovery", () => {
+    const description = buildProxyDescription({
+      mcpServers: {
+        browser: {
+          description: "  Headless browser automation\nfor client-rendered pages.  ",
+          command: "browser-mcp",
+        },
+        github: { command: "github-mcp" },
+      },
+    });
+
+    expect(description).toContain("Servers:\n- browser: Headless browser automation for client-rendered pages.\n- github\n");
+  });
+
+  it("omits blank descriptions and bounds descriptions included in the prompt", () => {
+    const description = buildProxyDescription({
+      mcpServers: {
+        blank: { description: "  \n  ", command: "blank-mcp" },
+        verbose: { description: "x".repeat(600), command: "verbose-mcp" },
+      },
+    });
+
+    expect(description).toContain("Servers:\n- blank\n- verbose: ");
+    expect(description).toContain(`${"x".repeat(499)}…`);
+    expect(description).not.toContain("x".repeat(500));
+  });
+
   it("is a pure function of config — runtime metadata never reaches the description (I5)", () => {
     const config: McpConfig = {
       settings: { toolPrefix: "server", directTools: true },

@@ -46,12 +46,15 @@ Preferred project config: `.mcp.json`
 {
   "mcpServers": {
     "chrome-devtools": {
+      "description": "Browser automation for navigating and inspecting client-rendered pages.",
       "command": "npx",
       "args": ["-y", "chrome-devtools-mcp@1.6.0"]
     }
   }
 }
 ```
+
+The optional per-server `description` is shown in the `mcp` proxy tool description, giving the agent a short capability summary before it searches or lists tools. It is normalized to one line and limited to 500 characters.
 
 Preferred user-global shared config: `~/.config/mcp/mcp.json`. Pi also reads the tool-agnostic global paths `~/.agents/mcp.json` and `~/.agents/mcp/mcp.json`.
 
