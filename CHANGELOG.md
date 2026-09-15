@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Deferred the full MCP runtime, configuration discovery, tools, management/authentication commands, and server initialization until `/mcp-enable`. Only the activation command is visible beforehand; `/mcp`, `/mcp-auth`, and MCP tools are registered after activation, and `eager`/`keep-alive` servers start at that point.
+- Removed the redundant `/pi-mcp` alias.
+- Runtime server registration before `/mcp-enable` now fails explicitly instead of activating or queueing work.
+
 ### Fixed
 - Hardened MCP 2026 multi-round input flows across proxy, direct, resource, and UI-resource calls, with actionable no-UI errors and cancellation cleanup.
 - Hardened MCP 2026-07-28 catalog listens with visible drop/recovery state, bounded re-listen on activity, resource update signals for open UIs, and quiet metadata/cache refreshes. (#468)

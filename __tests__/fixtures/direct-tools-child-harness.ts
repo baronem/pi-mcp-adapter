@@ -35,6 +35,7 @@ await session.bindExtensions({ mode: "print", onError: error => console.error(er
 
 try {
   await session.reload();
+  await session.prompt("/mcp-enable");
   // Normal prompts emit input before agent_start, allowing config-selected
   // tools to finish loading. The env-only case still checks session startup.
   if (process.env.MCP_CHILD_INPUT) {

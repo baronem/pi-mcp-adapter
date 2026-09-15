@@ -32,9 +32,9 @@ The adapter reads standard MCP files automatically. No extra setup needed if you
 
 | You already have... | What happens |
 |---------------------|--------------|
-| `.mcp.json` or `~/.config/mcp/mcp.json` | Pi uses it immediately. The first time you open `/mcp`, you'll see a short heads-up explaining which file Pi detected and that Pi only writes adapter-specific overrides to its own files. |
-| Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
-| Nothing configured yet | Run `/mcp setup` to scaffold a minimal `.mcp.json`, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
+| `.mcp.json` or `~/.config/mcp/mcp.json` | After `/mcp-enable`, Pi uses it immediately. The first time you open `/mcp`, you'll see a short heads-up explaining which file Pi detected and that Pi only writes adapter-specific overrides to its own files. |
+| Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp-enable`, then `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
+| Nothing configured yet | Run `/mcp-enable`, then `/mcp setup` to scaffold a minimal `.mcp.json`, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
 
 If you prefer the terminal, you can also run `pi-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to the Pi agent dir (`~/.pi/agent/mcp.json` by default, or `$PI_CODING_AGENT_DIR/mcp.json` when set).
 
@@ -76,7 +76,9 @@ Precedence is:
 
 `/mcp disable <server>` and `/mcp enable <server>` persist only the `disabled` field in the project-local `.pi/mcp.json`, which is the highest-precedence Pi layer. Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tool surfaces are refreshed. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
 
-Servers are **lazy by default** — they won't connect until you actually call one of their tools. The adapter caches tool metadata so search and describe work without live connections.
+The installed extension now starts as a lightweight bootstrap exposing only `/mcp-enable`. It does not read MCP configuration, register MCP tools or other MCP commands, load servers, or import the full MCP runtime until you run `/mcp-enable`. Once enabled, `/mcp`, `/mcp-auth`, and the configured MCP tools become available for the rest of the session; no `/reload` is needed.
+
+After activation, servers are **lazy by default** — they won't connect until you actually call one of their tools. The adapter caches tool metadata so search and describe work without live connections. Servers configured as `eager` or `keep-alive` connect when the MCP runtime activates, rather than during Pi startup.
 
 ```
 mcp({ search: "screenshot" })
@@ -184,7 +186,7 @@ export default function pluginHost(pi) {
 }
 ```
 
-Cross-extension registration uses Pi's shared event bus and does not require a runtime import from `pi-mcp-adapter`. Emit during `session_start` or later so the adapter listener is installed. The adapter writes `request.result` synchronously; the first adapter listener to respond wins.
+Cross-extension registration uses Pi's shared event bus and does not require a runtime import from `pi-mcp-adapter`. MCP activation remains explicitly user-controlled: registration before `/mcp-enable` fails with an instruction to enable MCP first and is not queued. After activation, the adapter writes `request.result` synchronously; the first adapter listener to respond wins.
 
 Runtime registrations are session scoped and never written to config files. Duplicate server names fail closed against configured servers and other registrations. Registered servers use the normal lazy connection, OAuth, approval, and shutdown behavior, but they are proxy-tool-only and their tools become visible at the next tool sync. To change a definition, dispose the registration and register again.
 
@@ -360,13 +362,13 @@ You can also pass only the `code` query parameter with `args: { code: "..." }`. 
 ### Lifecycle Modes
 
 - **`lazy`** (default) — Don't connect at startup. Connect on first tool call. Disconnect after idle timeout. Cached metadata keeps search/list working without connections.
-- **`eager`** — Connect at startup but don't auto-reconnect if the connection drops. No idle timeout by default (set `idleTimeout` explicitly to enable).
-- **`keep-alive`** — Connect at startup. Remote HTTP servers refresh their tool catalog during health checks, before user input, and before adapter-triggered turns, reconnecting when the server reports that the session expired. No idle timeout. Use for servers you always need available.
+- **`eager`** — Connect when the MCP runtime is activated with `/mcp`, but don't auto-reconnect if the connection drops. No idle timeout by default (set `idleTimeout` explicitly to enable).
+- **`keep-alive`** — Connect when the MCP runtime is activated. Remote HTTP servers refresh their tool catalog during health checks, before user input, and before adapter-triggered turns, reconnecting when the server reports that the session expired. No idle timeout. Use for servers you always need available.
 - **`lazy-keep-alive`** — Don't connect at startup. Connect on first tool call (like `lazy`). Once spawned, never idle-shut down and use the same catalog refresh and reconnect checks as `keep-alive`. Use for servers that are expensive to start but should stay resident after their first use.
 
 For remote HTTP keep-alive servers, the authoritative `tools/list` refresh is also the fallback when `list_changed` notifications are unavailable or their stream is lost. Each `tools/list` or `ping` request is capped at 5 seconds, up to 10 servers are checked concurrently, and transient failures use bounded backoff. A successful refresh updates metadata without reconnecting; a response proving that the HTTP session expired triggers a full reconnect and reinstalls the notification handlers. Dynamic direct-tool registration follows the refreshed metadata unless `freezeDirectTools` is enabled.
 
-When any enabled server uses `eager` or `keep-alive`, initialization also starts when the extension loads. This supports hosts that embed Pi programmatically and never emit `session_start`; if a session does start later, the session-owned runtime supersedes the load-time runtime.
+No lifecycle mode activates the full MCP runtime during Pi startup. Run `/mcp` first; `eager` and `keep-alive` servers then start as part of runtime initialization.
 
 ### Settings
 
@@ -773,8 +775,7 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 
 | Command | What it does |
 |---------|--------------|
-| `/mcp` | Interactive panel and first-run onboarding surface |
-| `/pi-mcp` | Alias for `/mcp` when the host reserves `/mcp` |
+| `/mcp` | Activate the deferred MCP runtime, then open the interactive panel and first-run onboarding surface |
 | `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
 | `/mcp tools` | List all tools |
 | `/mcp prompts` | List all MCP prompts registered as slash commands |

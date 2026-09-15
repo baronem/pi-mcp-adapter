@@ -125,12 +125,21 @@ describe("Pi registered extension reload real path", () => {
     const oldPids: number[] = [];
     try {
       await harness.session.reload();
+      expect(await activeFixtures(harness.pidDir)).toHaveLength(0);
+      expect(harness.session.extensionRunner.getAllRegisteredTools().map(tool => tool.definition.name))
+        .not.toContain("mcp");
+      await harness.session.prompt("/mcp-enable");
+      await harness.session.prompt("/mcp tools");
       const firstActive = await waitForFixture(harness.pidDir, active => active.length === 1).catch(error => {
         throw new Error(`${error instanceof Error ? error.message : String(error)}; errors=${JSON.stringify(harness.errors)}; statuses=${JSON.stringify(harness.statusCalls)}`);
       });
       oldPids.push(firstActive[0].pid);
 
       await harness.session.reload();
+      await waitFor(() => !isAlive(oldPids[0]));
+      expect(await activeFixtures(harness.pidDir)).toHaveLength(0);
+      await harness.session.prompt("/mcp-enable");
+      await harness.session.prompt("/mcp tools");
       const secondActive = await waitForFixture(harness.pidDir, active =>
         active.length === 1 && active[0].pid !== oldPids[0],
       ).catch(async error => {
@@ -140,6 +149,10 @@ describe("Pi registered extension reload real path", () => {
       await waitFor(() => !isAlive(oldPids[0]));
 
       await harness.session.reload();
+      await waitFor(() => !isAlive(oldPids[1]));
+      expect(await activeFixtures(harness.pidDir)).toHaveLength(0);
+      await harness.session.prompt("/mcp-enable");
+      await harness.session.prompt("/mcp tools");
       const active = await waitForFixture(harness.pidDir, fixtures =>
         fixtures.length === 1 && fixtures[0].pid !== oldPids[1],
       );

@@ -1,6 +1,6 @@
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
-import { createCachedToolSelectorCandidateIndex, isServerCacheValid, parseDirectToolSelectors, type MetadataCache } from "./metadata-cache.ts";
+import { createCachedToolSelectorCandidateIndex, isServerCacheValid, parseDirectToolSelectors } from "./reference-metadata.ts";
 import {
   formatToolName,
   isServerDisabled,
@@ -8,6 +8,7 @@ import {
   resolveToolPrefix,
   type CachedTool,
   type McpConfig,
+  type MetadataCache,
   type ServerCacheEntry,
   type ServerEntry,
   type ToolPrefix,

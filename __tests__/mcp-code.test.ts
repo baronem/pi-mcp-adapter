@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
-import { createMcpAdapter } from "../index.ts";
+import { createInstalledMcpRuntime } from "../runtime.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
@@ -24,7 +24,7 @@ function textBlocks(result: Awaited<ReturnType<typeof runMcpScript>>): string[] 
 describe("runMcpScript", () => {
   it("registers mcpScript by default", () => {
     const registerTool = vi.fn();
-    createMcpAdapter({ config: { settings: {}, mcpServers: {} } })({
+    createInstalledMcpRuntime({ config: { settings: {}, mcpServers: {} } })({
       registerTool,
       registerFlag: vi.fn(),
       registerCommand: vi.fn(),
@@ -43,7 +43,7 @@ describe("runMcpScript", () => {
 
   it("skips mcpScript when scriptMode is false", () => {
     const registerTool = vi.fn();
-    createMcpAdapter({ config: { settings: { scriptMode: false }, mcpServers: {} } })({
+    createInstalledMcpRuntime({ config: { settings: { scriptMode: false }, mcpServers: {} } })({
       registerTool,
       registerFlag: vi.fn(),
       registerCommand: vi.fn(),

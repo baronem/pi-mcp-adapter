@@ -206,11 +206,11 @@ describe("runtime MCP server registration", () => {
   it("registers from a distinct extension wrapper over the shared event bus", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter, MCP_RUNTIME_REGISTER_EVENT } = await import("../index.ts");
+    const { MCP_RUNTIME_REGISTER_EVENT } = await import("../index.ts");
     const events = createEventBus();
     const { api: adapterApi, handlers } = createPi(events);
     const { api: consumerApi } = createPi(events);
-    mcpAdapter(adapterApi);
+    (await import("../runtime.ts")).default(adapterApi);
     await handlers.get("session_start")?.({}, {});
     await settle();
 
@@ -233,10 +233,10 @@ describe("runtime MCP server registration", () => {
     const state = createState();
     state.config.mcpServers = { configured: { url: "https://configured.test/mcp" } };
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter, MCP_RUNTIME_REGISTER_EVENT } = await import("../index.ts");
+    const { MCP_RUNTIME_REGISTER_EVENT } = await import("../index.ts");
     const events = createEventBus();
     const { api, handlers } = createPi(events);
-    mcpAdapter(api);
+    (await import("../runtime.ts")).default(api);
     await handlers.get("session_start")?.({}, {});
     await settle();
 
@@ -251,10 +251,10 @@ describe("runtime MCP server registration", () => {
   it("leaves a prefilled event result untouched", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter, MCP_RUNTIME_REGISTER_EVENT } = await import("../index.ts");
+    const { MCP_RUNTIME_REGISTER_EVENT } = await import("../index.ts");
     const events = createEventBus();
     const { api, handlers } = createPi(events);
-    mcpAdapter(api);
+    (await import("../runtime.ts")).default(api);
     const registration = { dispose: vi.fn().mockResolvedValue(undefined) };
     const request = {
       version: 1,
@@ -274,11 +274,11 @@ describe("runtime MCP server registration", () => {
   it("falls back to the shared event bus for a distinct extension wrapper", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
+    const { registerMcpServer } = await import("../index.ts");
     const events = createEventBus();
     const { api: adapterApi, handlers } = createPi(events);
     const { api: consumerApi } = createPi(events);
-    mcpAdapter(adapterApi);
+    (await import("../runtime.ts")).default(adapterApi);
     await handlers.get("session_start")?.({}, {});
     await settle();
 
@@ -293,9 +293,9 @@ describe("runtime MCP server registration", () => {
   it("returns an isolated snapshot with the original direct-tool definition", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter, registerMcpServer, getRuntimeMcpServerSnapshot } = await import("../index.ts");
+    const { registerMcpServer, getRuntimeMcpServerSnapshot } = await import("../index.ts");
     const { api, handlers } = createPi();
-    mcpAdapter(api);
+    (await import("../runtime.ts")).default(api);
     await handlers.get("session_start")?.({}, {});
     await settle();
 
@@ -318,11 +318,11 @@ describe("runtime MCP server registration", () => {
   it("snapshots through a distinct extension wrapper and fails after disposal", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter, registerMcpServer, getRuntimeMcpServerSnapshot, MCP_RUNTIME_SNAPSHOT_EVENT } = await import("../index.ts");
+    const { registerMcpServer, getRuntimeMcpServerSnapshot, MCP_RUNTIME_SNAPSHOT_EVENT } = await import("../index.ts");
     const events = createEventBus();
     const { api: adapterApi, handlers } = createPi(events);
     const { api: consumerApi } = createPi(events);
-    mcpAdapter(adapterApi);
+    (await import("../runtime.ts")).default(adapterApi);
     await handlers.get("session_start")?.({}, {});
     await settle();
 
@@ -352,9 +352,9 @@ describe("runtime MCP server registration", () => {
   it("registers after init, exposes the server in state, and disposes cleanly", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
+    const { registerMcpServer } = await import("../index.ts");
     const { api, handlers } = createPi();
-    mcpAdapter(api);
+    (await import("../runtime.ts")).default(api);
     await handlers.get("session_start")?.({}, {});
     await settle();
 
@@ -386,9 +386,9 @@ describe("runtime MCP server registration", () => {
     const state = createState();
     state.config.mcpServers = { configured: { url: "https://configured.test/mcp" } };
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter, registerMcpServer } = await import("../index.ts");
+    const { registerMcpServer } = await import("../index.ts");
     const { api, handlers } = createPi();
-    mcpAdapter(api);
+    (await import("../runtime.ts")).default(api);
     await handlers.get("session_start")?.({}, {});
     await settle();
 
@@ -402,9 +402,9 @@ describe("runtime MCP server registration", () => {
   it("queues pre-init registrations and drains them when init completes", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    const { default: mcpAdapter, registerMcpServer, getRuntimeMcpServerSnapshot } = await import("../index.ts");
+    const { registerMcpServer, getRuntimeMcpServerSnapshot } = await import("../index.ts");
     const { api, handlers } = createPi();
-    mcpAdapter(api);
+    (await import("../runtime.ts")).default(api);
 
     registerMcpServer({ pi: api, name: "early-plugin", definition: { url: "https://early.test/mcp" } });
     expect(() => getRuntimeMcpServerSnapshot({ pi: api, name: "early-plugin" }))
@@ -430,9 +430,9 @@ describe("runtime MCP server registration", () => {
     const secondState = createState();
     secondState.config.mcpServers = { "plugin-a": { url: "https://now-configured.test/mcp" } };
     mocks.initializeMcp.mockResolvedValueOnce(firstState).mockResolvedValueOnce(secondState);
-    const { default: mcpAdapter, registerMcpServer, getRuntimeMcpServerSnapshot } = await import("../index.ts");
+    const { registerMcpServer, getRuntimeMcpServerSnapshot } = await import("../index.ts");
     const { api, handlers } = createPi();
-    mcpAdapter(api);
+    (await import("../runtime.ts")).default(api);
     await handlers.get("session_start")?.({}, {});
     await settle();
 
